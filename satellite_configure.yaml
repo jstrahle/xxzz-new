@@ -17,20 +17,20 @@
     # ══════════════════════════════════════════════════════════════
     # 10  Subscription Manifest
     # ══════════════════════════════════════════════════════════════
-#    - name: 10.1 Upload subscription manifest to Satellite
-#      redhat.satellite.subscription_manifest:
-#        <<: *sat_conn
-#        organization: "{{ sat_org }}"
-#        manifest_path: "{{ sat_manifest }}"
-#        state: present
-#      tags: subscription
-#
-#    - name: 10.2 Refresh Satellite subscriptions after manifest upload
-#      redhat.satellite.subscription_manifest:
-#        <<: *sat_conn
-#        organization: "{{ sat_org }}"
-#        state: refreshed
-#      tags: subscription
+    - name: 10.1 Upload subscription manifest to Satellite
+      redhat.satellite.subscription_manifest:
+        <<: *sat_conn
+        organization: "{{ sat_org }}"
+        manifest_path: "{{ sat_manifest }}"
+        state: present
+      tags: subscription
+
+    - name: 10.2 Refresh Satellite subscriptions after manifest upload
+      redhat.satellite.subscription_manifest:
+        <<: *sat_conn
+        organization: "{{ sat_org }}"
+        state: refreshed
+      tags: subscription
 
     # ══════════════════════════════════════════════════════════════
     # 11  Enable Red Hat Repository Sets
