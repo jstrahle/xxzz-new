@@ -1,0 +1,294 @@
+---
+- name: Configure Red Hat Satellite Server
+  hosts: satellite
+  become: yes
+  gather_facts: true
+
+  vars:
+    # Reusable connection block (YAML anchor)
+    _sat_conn: &sat_conn
+      server_url: "{{ satellite_server_url }}"
+      username: "{{ satellite_username }}"
+      password: "{{ satellite_password }}"
+      validate_certs: "{{ satellite_validate_certs }}"
+
+  tasks:
+
+    # ══════════════════════════════════════════════════════════════
+    # 10  Subscription Manifest
+    # ══════════════════════════════════════════════════════════════
+#    - name: 10.1 Upload subscription manifest to Satellite
+#      redhat.satellite.subscription_manifest:
+#        <<: *sat_conn
+#        organization: "{{ sat_org }}"
+#        manifest_path: "{{ sat_manifest }}"
+#        state: present
+#      tags: subscription
+#
+#    - name: 10.2 Refresh Satellite subscriptions after manifest upload
+#      redhat.satellite.subscription_manifest:
+#        <<: *sat_conn
+#        organization: "{{ sat_org }}"
+#        state: refreshed
+#      tags: subscription
+
+    # ══════════════════════════════════════════════════════════════
+    # 11  Enable Red Hat Repository Sets
+    # ══════════════════════════════════════════════════════════════
+    - name: 11 Enable Red Hat repository sets
+      redhat.satellite.repository_set:
+        <<: *sat_conn
+        organization: "{{ sat_org }}"
+        product: "{{ item.product }}"
+        name: "{{ item.name }}"
+        releasever: "{{ item.repositories.releasever | default(omit) }}"
+        state: enabled
+        repositories: "{{ item.repositories | default(omit) }}"
+        all_repositories: "{{ true if item.repositories is not defined else omit }}"
+      loop: "{{ satellite_repository_sets }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags: repos
+
+    # ══════════════════════════════════════════════════════════════
+    # 13.1  Lifecycle Environments
+    # ══════════════════════════════════════════════════════════════
+    - name: 13.1 Create lifecycle environments
+      redhat.satellite.lifecycle_environment:
+        <<: *sat_conn
+        organization: "{{ sat_org }}"
+        name: "{{ item.name }}"
+        description: "{{ item.description | default(omit) }}"
+        prior: "{{ item.prior }}"
+        state: present
+      loop: "{{ satellite_lifecycle_environments }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags: lifecycle_env
+
+    # ══════════════════════════════════════════════════════════════
+    # 13.2 – 13.4  Host Groups
+    # ══════════════════════════════════════════════════════════════
+    - name: 13.2 Create host groups
+      redhat.satellite.hostgroup:
+        <<: *sat_conn
+        organization: "{{ sat_org }}"
+        name: "{{ item.name }}"
+        parent: "{{ item.parent | default(omit) }}"
+        organizations:
+          - "{{ sat_org }}"
+        locations:
+          - "{{ sat_location }}"
+        state: present
+      loop: "{{ satellite_hostgroups }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags: create-hostgroup
+
+    # ══════════════════════════════════════════════════════════════
+    # 14.0  Custom Products & Repositories (Microsoft)
+    # ══════════════════════════════════════════════════════════════
+    - name: 14.0 Create custom products
+      redhat.satellite.product:
+        <<: *sat_conn
+        organization: "{{ sat_org }}"
+        name: "{{ item.name }}"
+        description: "{{ item.description | default(omit) }}"
+#        sync_plan: "{{ item.sync_plan | default(omit) }}"
+        state: present
+      loop: "{{ satellite_custom_products }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags: ms_product
+
+    - name: 14.0a Create custom repositories
+      redhat.satellite.repository:
+        <<: *sat_conn
+        organization: "{{ sat_org }}"
+        product: "{{ item.product }}"
+        name: "{{ item.name }}"
+        content_type: "{{ item.content_type }}"
+        url: "{{ item.url }}"
+        download_policy: "{{ item.download_policy | default('on_demand') }}"
+        state: present
+      loop: "{{ satellite_custom_repositories }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - ms_repo_rhel9
+        - ms_repo_rhel10
+
+    # ══════════════════════════════════════════════════════════════
+    # 14 – 15  Content Views
+    # ══════════════════════════════════════════════════════════════
+    - name: 14-15 Create content views
+      redhat.satellite.content_view:
+        <<: *sat_conn
+        organization: "{{ sat_org }}"
+        name: "{{ item.name }}"
+        description: "{{ item.description | default(omit) }}"
+        repositories: "{{ item.repositories }}"
+        state: present
+      loop: "{{ satellite_content_views }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - contentview
+        - contentview_rhel10
+        - capsule_cv
+        - ms_cv_rhel9
+        - ms_cv_rhel10
+
+    # ══════════════════════════════════════════════════════════════
+    # 16.1  Publish regular content views
+    #   (must be published before composites can reference them)
+    # ══════════════════════════════════════════════════════════════
+    - name: 16.1 Publish regular content views
+      redhat.satellite.content_view_version:
+        <<: *sat_conn
+        organization: "{{ sat_org }}"
+        content_view: "{{ item.name }}"
+      loop: "{{ satellite_content_views }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - publish
+        - ms_cv_rhel9_publish
+        - ms_cv_rhel10_publish
+
+    # ══════════════════════════════════════════════════════════════
+    # 16.2  Composite Content Views
+    #   (created after regular CVs are published)
+    # ══════════════════════════════════════════════════════════════
+    - name: 16.2 Create composite content views
+      redhat.satellite.content_view:
+        <<: *sat_conn
+        organization: "{{ sat_org }}"
+        name: "{{ item.name }}"
+        description: "{{ item.description | default(omit) }}"
+        composite: true
+        components: "{{ item.components }}"
+        state: present
+      loop: "{{ satellite_composite_content_views }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - ccv_ms_rhel9
+        - ccv_ms_rhel10
+
+    - name: 16.3 Publish composite content views
+      redhat.satellite.content_view_version:
+        <<: *sat_conn
+        organization: "{{ sat_org }}"
+        content_view: "{{ item.name }}"
+      loop: "{{ satellite_composite_content_views }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - publish
+        - publish_ccv_ms_rhel9
+        - publish_ccv_ms_rhel10
+
+    # ══════════════════════════════════════════════════════════════
+    # 17  Promote Content Views to Lifecycle Environments
+    # ══════════════════════════════════════════════════════════════
+    - name: 17 Promote content views to lifecycle environments
+      redhat.satellite.content_view_version:
+        <<: *sat_conn
+        organization: "{{ sat_org }}"
+        content_view: "{{ item.content_view }}"
+        lifecycle_environments: "{{ item.lifecycle_environments }}"
+      loop: "{{ satellite_content_view_promotions }}"
+      loop_control:
+        label: "{{ item.content_view }} → {{ item.lifecycle_environments | join(', ') }}"
+      tags: promote
+
+    # ══════════════════════════════════════════════════════════════
+    # 18  Activation Keys (with content overrides)
+    # ══════════════════════════════════════════════════════════════
+    - name: 18 Create activation keys
+      redhat.satellite.activation_key:
+        <<: *sat_conn
+        organization: "{{ sat_org }}"
+        name: "{{ item.name }}"
+        lifecycle_environment: "{{ item.lifecycle_environment }}"
+        content_view: "{{ item.content_view }}"
+        content_overrides: "{{ item.content_overrides | default(omit) }}"
+        state: present
+      loop: "{{ satellite_activation_keys }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - ak
+        - override_repo
+        - override_msrepo
+
+    # ══════════════════════════════════════════════════════════════
+    # 19  SCAP Content
+    # ══════════════════════════════════════════════════════════════
+    - name: 19.0 Find SCAP content files to upload
+      ansible.builtin.find:
+        paths: /usr/share/xml/scap/ssg/content/satellite
+        patterns: "*.xml"
+        recurse: true
+      register: scap_files
+      tags: SCAP_Content
+
+    - name: 19.1 Upload SCAP content
+      redhat.satellite.scap_content:
+        <<: *sat_conn
+        title: "{{ item.path | basename | regex_replace('\\.xml$', '') }}"
+        scap_file: "{{ item.path }}"
+        original_filename: "{{ item.path | basename }}"
+        organizations:
+          - "{{ sat_org }}"
+        locations:
+          - "{{ sat_location }}"
+        state: present
+      loop: "{{ scap_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      tags: SCAP_Content
+
+    # ══════════════════════════════════════════════════════════════
+    # 12  Sync Plan
+    # ══════════════════════════════════════════════════════════════
+    - name: 12 Create daily sync plan
+      redhat.satellite.sync_plan:
+        <<: *sat_conn
+        organization: "{{ sat_org }}"
+        name: Daily Sync
+        interval: daily
+        sync_date: "2025-09-17 19:00:00 UTC"
+        enabled: true
+        products:
+          - Red Hat Enterprise Linux for x86_64
+          - product_microsoft
+          - Red Hat Satellite Capsule
+      tags:
+        - sync-plan
+        - repos
+
+    # ══════════════════════════════════════════════════════════════
+    # 20  Cron Job
+    # ══════════════════════════════════════════════════════════════
+    - name: 20.0 Check if the promote/publish script exists
+      ansible.builtin.stat:
+        path: "{{ script_path }}"
+      register: script_status
+      tags: cron
+
+    - name: 20.1 Ensure the monthly promote/publish job is scheduled
+      ansible.builtin.cron:
+        name: "Monthly automated promote and publish"
+        minute: "0"
+        hour: "0"
+        day: "12,28,29,30,31"
+        month: "*"
+        weekday: "*"
+        job: "{{ script_path }}"
+        user: root
+        state: present
+      when: script_status.stat.exists
+      tags: cron
+

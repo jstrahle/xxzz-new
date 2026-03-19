@@ -1,0 +1,176 @@
+---
+- name: Prepare host for Satellite/Capsule installation
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    vg_name: pulpvg
+    lv_name: pulplv
+    fs_type: xfs
+    mount_point: /var/lib/pulp
+    env_type: prod
+  tasks:
+    - name: Clean DNF cache
+      ansible.builtin.dnf:
+        clean: all
+
+    - name: Upgrade all packages to the newest version
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+        update_cache: true
+
+    - name: Install required packages
+      ansible.builtin.dnf:
+        name:
+          - firewalld
+          - sos
+          - lvm2
+          - bash-completion
+          - bind-utils
+          - curl
+          - fapolicyd
+          - man-pages
+          - nano
+          - openssh-clients
+          - psmisc
+          - rsync
+          - tar
+          - tpm2-tools
+          - zstd
+        state: present
+
+    - name: Resolve Azure data disk symlink
+      ansible.builtin.stat:
+        path: /dev/disk/azure/scsi1/lun0
+      register: azure_data_disk
+      changed_when: false
+      no_log: true
+
+    - name: Fail if Azure data disk symlink does not exist
+      ansible.builtin.fail:
+        msg: "Azure data disk symlink /dev/disk/azure/scsi1/lun0 does not exist"
+      when: not azure_data_disk.stat.exists or not azure_data_disk.stat.islnk
+
+    - name: Extract physical disk name (e.g., sdb)
+      ansible.builtin.set_fact:
+        azure_data_disk_name: "{{ azure_data_disk.stat.lnk_source | regex_replace('^/dev/', '') }}"
+
+    - name: Show Azure data disk
+      ansible.builtin.debug:
+        msg: "Azure data disk is /dev/{{ azure_data_disk_name }}"
+
+    - name: Create physical volume
+      community.general.lvm_pv:
+        device: "/dev/{{ azure_data_disk_name }}"
+
+    - name: Create volume group if not present
+      community.general.lvg:
+        vg: "{{ vg_name }}"
+        pvs: "/dev/{{ azure_data_disk_name }}"
+
+    - name: Create logical volume
+      community.general.lvol:
+        lv: "{{ lv_name }}"
+        vg: "{{ vg_name }}"
+        size: 100%FREE
+
+    - name: Format the logical volume
+      community.general.filesystem:
+        dev: "/dev/{{ vg_name }}/{{ lv_name }}"
+        fstype: "{{ fs_type }}"
+        state: present
+
+    - name: Mount the logical volume
+      ansible.builtin.mount:
+        path: "{{ mount_point }}"
+        src: "/dev/{{ vg_name }}/{{ lv_name }}"
+        fstype: "{{ fs_type }}"
+        state: mounted
+
+    - name: Systemctl daemon reload
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+    - name: Check if swap partition already exists
+      ansible.builtin.command: "blkid /dev/rootvg/swaplv"
+      register: blkid_check
+      changed_when: false
+      failed_when: false
+
+    - name: Create swap logical volume
+      community.general.lvol:
+        lv: swaplv
+        vg: rootvg
+        size: 4G
+      when: blkid_check.rc != 0
+
+    - name: Create swap filesystem
+      ansible.builtin.command:
+        cmd: mkswap -L swaplv /dev/rootvg/swaplv
+      when: blkid_check.rc != 0
+      changed_when: true
+
+    - name: Add swap partition to fstab
+      ansible.posix.mount:
+        path: none
+        src: LABEL=swaplv
+        fstype: swap
+        opts: sw,pri=10
+        state: present
+      when: blkid_check.rc != 0
+
+    - name: Enable swap partition
+      ansible.builtin.command:
+        cmd: "swapon /dev/rootvg/swaplv"
+      when: blkid_check.rc != 0
+      changed_when: true
+      failed_when: false
+
+    - name: Set FQDN based on environment
+      ansible.builtin.set_fact:
+        fqdn_hostname: "{{ ansible_hostname }}.{{ 'rhsat.azr.op-palvelut.fi' if env_type == 'prod' else 'rhsatdev.dev.azr.op-palvelut.net' }}"
+
+    - name: Update system hostname
+      ansible.builtin.hostname:
+        name: "{{ fqdn_hostname }}"
+
+    - name: Get primary IP address
+      ansible.builtin.set_fact:
+        primary_ip: "{{ ansible_default_ipv4.address }}"
+
+    - name: Ensure FQDN entry exists in /etc/hosts with IP
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: "^{{ primary_ip }}\\s+"
+        line: "{{ primary_ip }} {{ fqdn_hostname }} {{ ansible_hostname }}"
+        state: present
+        create: yes
+        backup: yes
+
+    - name: Enable and start firewalld service
+      ansible.builtin.service:
+        name: firewalld
+        state: started
+        enabled: true
+
+    - name: Configure Satellite firewall service
+      ansible.posix.firewalld:
+        service: RH-Satellite-6
+        zone: public
+        state: enabled
+        immediate: true
+        permanent: true
+
+    - name: Open required firewall ports for Satellite Server
+      ansible.posix.firewalld:
+        port: "{{ item }}"
+        zone: public
+        state: enabled
+        immediate: true
+        permanent: true
+      loop:
+        - 80/tcp
+        - 443/tcp
+        - 8140/tcp
+        - 9090/tcp

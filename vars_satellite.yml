@@ -1,0 +1,231 @@
+#
+# Satellite install configuration
+#
+satellite_installer_scenario: satellite
+satellite_installer_locale: C.UTF-8
+satellite_installer_no_colors: true
+satellite_installer_verbose: true
+satellite_installer_timeout: 1800
+
+satellite_server_url: https://satellite.example.com
+sat_org: "Acme Enterprises"
+sat_location: "Test Lab"
+
+satellite_validate_certs: false
+
+satellite_register_insights: false
+
+sat_manifest: "/home/jstrahle/Manifest-satinf-satprem.zip"
+
+satellite_installer_options:
+  - --foreman-initial-admin-username "{{ satellite_username }}"
+  - --foreman-initial-admin-password '{{ satellite_password }}'
+  - --foreman-initial-admin-email root@example.com
+  - --foreman-initial-admin-first-name Satellite
+  - --foreman-initial-admin-last-name Administrator
+  - --foreman-initial-organization "{{ sat_org }}"
+  - --foreman-initial-location "{{ sat_location }}"
+  - --tuning development
+  - --skip-checks-i-know-better
+  - --enable-foreman-plugin-ansible
+  - --enable-foreman-plugin-rh-cloud
+  - --enable-foreman-plugin-remote-execution
+  - --enable-foreman-plugin-openscap
+  - --enable-foreman-plugin-webhooks
+  - --enable-foreman-proxy-plugin-ansible
+  - --enable-foreman-proxy-plugin-openscap
+  - --no-enable-foreman-plugin-discovery
+  - --no-enable-foreman-proxy-plugin-discovery
+  - --foreman-proxy-content-enable-ansible true
+  - --foreman-proxy-content-enable-docker true
+  - --foreman-plugin-tasks-automatic-cleanup true
+  - --foreman-proxy-plugin-openscap-ansible-module true
+  - --foreman-plugin-rh-cloud-enable-iop-advisor-engine true
+
+
+script_path: "/root/final/promote_and_publish_cv.sh"
+
+satellite_repository_sets:
+  - name: Red Hat Enterprise Linux 9 for x86_64 - BaseOS (RPMs)
+    product: Red Hat Enterprise Linux for x86_64
+  - name: Red Hat Enterprise Linux 9 for x86_64 - AppStream (RPMs)
+    product: Red Hat Enterprise Linux for x86_64
+  - name: Red Hat Satellite Client 6 for RHEL 9 x86_64 (RPMs)
+    product: Red Hat Enterprise Linux for x86_64
+  - name: Red Hat Enterprise Linux 10 for x86_64 - BaseOS (RPMs)
+    product: Red Hat Enterprise Linux for x86_64
+  - name: Red Hat Enterprise Linux 10 for x86_64 - AppStream (RPMs)
+    product: Red Hat Enterprise Linux for x86_64
+  - name: Red Hat Satellite Client 6 for RHEL 10 x86_64 (RPMs)
+    product: Red Hat Enterprise Linux for x86_64 
+  - name: "Red Hat Satellite Capsule 6.17 for RHEL 9 x86_64 (RPMs)"
+    product: "Red Hat Satellite Capsule"
+
+satellite_lifecycle_environments:
+  - name: nonprod
+    description: "Nonprod Patching Group"
+    prior: Library
+  - name: prod
+    description: "Production Patching Group"
+    prior: nonprod
+
+# ── Host groups ────────────────────────────────────────────────
+satellite_hostgroups:
+  # Parent groups
+  - name: hg-nonprod
+  - name: hg-prod
+  # Children of hg-nonprod
+  - name: linux-nonprod-01-02
+    parent: hg-nonprod
+  - name: linux-nonprod-01-03
+    parent: hg-nonprod
+  - name: linux-nonprod-02-02
+    parent: hg-nonprod
+  - name: linux-nonprod-02-03
+    parent: hg-nonprod
+  - name: linux-nonprod-02-04
+    parent: hg-nonprod
+  # Children of hg-prod
+  - name: linux-prod-03-02
+    parent: hg-prod
+  - name: linux-prod-03-03
+    parent: hg-prod
+  - name: linux-prod-04-02
+    parent: hg-prod
+  - name: linux-prod-04-03
+    parent: hg-prod
+  - name: linux-prod-04-04
+    parent: hg-prod
+
+# ── Custom products ────────────────────────────────────────────
+satellite_custom_products:
+  - name: product_microsoft
+    description: "Custom product for Microsoft PowerShell content"
+    sync_plan: "Daily Sync"
+
+# ── Custom repositories ────────────────────────────────────────
+satellite_custom_repositories:
+  - product: product_microsoft
+    name: "Microsoft packages for Redhat9"
+    content_type: yum
+    url: "https://packages.microsoft.com/rhel/9/prod/"
+    download_policy: on_demand
+  - product: product_microsoft
+    name: "Microsoft packages for Redhat10"
+    content_type: yum
+    url: "https://packages.microsoft.com/rhel/10/prod/"
+    download_policy: on_demand
+
+# ── Content views (regular) ────────────────────────────────────
+satellite_content_views:
+  - name: cv_rhel9
+    description: "Content View for RHEL 9 Appstream, BaseOS and Satellite client 6"
+    repositories:
+      - name: "Red Hat Enterprise Linux 9 for x86_64 - BaseOS RPMs 9"
+        product: "Red Hat Enterprise Linux for x86_64"
+      - name: "Red Hat Enterprise Linux 9 for x86_64 - AppStream RPMs 9"
+        product: "Red Hat Enterprise Linux for x86_64"
+      - name: "Red Hat Satellite Client 6 for RHEL 9 x86_64 RPMs"
+        product: "Red Hat Enterprise Linux for x86_64"
+
+  - name: cv_rhel10
+    description: "Content View for RHEL 10 Appstream, BaseOS and Satellite client 6"
+    repositories:
+      - name: "Red Hat Enterprise Linux 10 for x86_64 - BaseOS RPMs 10"
+        product: "Red Hat Enterprise Linux for x86_64"
+      - name: "Red Hat Enterprise Linux 10 for x86_64 - AppStream RPMs 10"
+        product: "Red Hat Enterprise Linux for x86_64"
+      - name: "Red Hat Satellite Client 6 for RHEL 10 x86_64 RPMs"
+        product: "Red Hat Enterprise Linux for x86_64"
+
+  - name: cv_ms_rhel9
+    description: "RHEL 9 Microsoft CV"
+    repositories:
+      - name: "Microsoft packages for Redhat9"
+        product: product_microsoft
+
+  - name: cv_ms_rhel10
+    description: "RHEL 10 Microsoft CV"
+    repositories:
+      - name: "Microsoft packages for Redhat10"
+        product: product_microsoft
+
+  - name: cv_capsule_rhel9
+    description: "Content View for Capsule 6.17 Repo"
+    repositories:
+      - name: "Red Hat Enterprise Linux 9 for x86_64 - BaseOS RPMs 9"
+        product: "Red Hat Enterprise Linux for x86_64"
+      - name: "Red Hat Enterprise Linux 9 for x86_64 - AppStream RPMs 9"
+        product: "Red Hat Enterprise Linux for x86_64"
+      - name: "Red Hat Satellite Capsule 6.17 for RHEL 9 x86_64 RPMs"
+        product: "Red Hat Satellite Capsule"
+
+# ── Composite content views ────────────────────────────────────
+satellite_composite_content_views:
+  - name: ccv_rhel9_with_mspkgs
+    description: "Composite CV for RHEL9 and Microsoft content"
+    components:
+      - content_view: cv_rhel9
+        latest: true
+      - content_view: cv_ms_rhel9
+        latest: true
+
+  - name: ccv_rhel10_with_mspkgs
+    description: "Composite CV for RHEL10 and Microsoft content"
+    components:
+      - content_view: cv_rhel10
+        latest: true
+      - content_view: cv_ms_rhel10
+        latest: true
+
+# ── Content view promotions ────────────────────────────────────
+satellite_content_view_promotions:
+  - content_view: cv_rhel9
+    lifecycle_environments: [nonprod, prod]
+  - content_view: cv_ms_rhel9
+    lifecycle_environments: [nonprod, prod]
+  - content_view: ccv_rhel9_with_mspkgs
+    lifecycle_environments: [nonprod, prod]
+  - content_view: cv_capsule_rhel9
+    lifecycle_environments: [nonprod]
+  - content_view: cv_rhel10
+    lifecycle_environments: [nonprod, prod]
+  - content_view: cv_ms_rhel10
+    lifecycle_environments: [nonprod, prod]
+  - content_view: ccv_rhel10_with_mspkgs
+    lifecycle_environments: [nonprod, prod]
+
+# ── Activation keys ────────────────────────────────────────────
+satellite_activation_keys:
+  - name: ak_nonprod_rhel9
+    lifecycle_environment: nonprod
+    content_view: ccv_rhel9_with_mspkgs
+    content_overrides:
+      - label: "Acme_Enterprises_product_microsoft_Microsoft_packages_for_Redhat9"
+        override: enabled
+  - name: ak_prod_rhel9
+    lifecycle_environment: prod
+    content_view: ccv_rhel9_with_mspkgs
+    content_overrides:
+      - label: "Acme_Enterprises_product_microsoft_Microsoft_packages_for_Redhat9"
+        override: enabled
+  - name: ak_nonprod_rhel10
+    lifecycle_environment: nonprod
+    content_view: ccv_rhel10_with_mspkgs
+    content_overrides:
+      - label: "Acme_Enterprises_product_microsoft_Microsoft_packages_for_Redhat10"
+        override: enabled
+  - name: ak_prod_rhel10
+    lifecycle_environment: prod
+    content_view: ccv_rhel10_with_mspkgs
+    content_overrides:
+      - label: "Acme_Enterprises_product_microsoft_Microsoft_packages_for_Redhat10"
+        override: enabled
+  - name: ak_capsule_rhel9
+    lifecycle_environment: nonprod
+    content_view: cv_capsule_rhel9
+    content_overrides:
+      - label: satellite-capsule-6.17-for-rhel-9-x86_64-rpms
+        override: enabled
+      - label: satellite-maintenance-6.17-for-rhel-9-x86_64-rpms
+        override: enabled

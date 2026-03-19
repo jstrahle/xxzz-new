@@ -1,0 +1,74 @@
+---
+- name: Install Red Hat Satellite
+  hosts: satellite
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Fail if invalid Satellite URL defined
+      ansible.builtin.fail:
+        msg: "Satellite URL must start with http:// or https://."
+      when:
+        - not satellite_server_url | default(true) or
+          (not satellite_server_url.startswith("http://") and
+           not satellite_server_url.startswith("https://"))
+
+    - name: Install helpful packages
+      ansible.builtin.dnf:
+        name:
+          - firewalld
+          - insights-client
+          - podman
+          - rhc
+          - satellite-installer
+          - sos
+        state: present
+
+    - name: Check Satellite status
+      redhat.satellite.status_info:
+        server_url: "{{ satellite_server_url }}"
+        username: "{{ satellite_username }}"
+        password: "{{ satellite_password }}"
+        validate_certs: false
+      register: satellite_info
+      failed_when:
+        - satellite_info.msg is defined
+        - "'Unauthorized' in satellite_info.msg"
+
+    - name: Login to Red Hat container registry for Advisor installation
+      no_log: true
+      ansible.builtin.shell: >
+        set -o pipefail ;
+        echo '{{ satellite_rhsm_password }}' |
+        podman login
+        --username {{ satellite_rhsm_username }}
+        --password-stdin
+        registry.redhat.io
+      changed_when: true
+      when:
+        - "'--foreman-plugin-rh-cloud-enable-iop-advisor-engine true' in satellite_installer_options"
+        - (satellite_info.msg is defined and 'Connection refused' in satellite_info.msg) or
+          (satellite_info.status.result is defined and satellite_info.status.result != 'ok')
+
+    - name: Install Satellite
+      ansible.builtin.include_role:
+        name: redhat.satellite_operations.installer
+      register: satellite_install
+      when: >
+        (satellite_info.msg is defined and 'Connection refused' in satellite_info.msg) or
+        (satellite_info.status.result is defined and satellite_info.status.result != 'ok')
+
+    - name: Verify Satellite status
+      redhat.satellite.status_info:
+        server_url: "{{ satellite_server_url }}"
+        username: "{{ satellite_username }}"
+        password: "{{ satellite_password }}"
+        validate_certs: "{{ satellite_validate_certs }}"
+      register: satellite_info
+
+    - name: Connect Satellite to Red Hat Insights
+      ansible.builtin.command: satellite-installer --register-with-insights
+      changed_when: true
+      when:
+        - satellite_register_insights | bool
+        - satellite_install is not skipped
+        - ('status' in satellite_info and 'result' in satellite_info.status and satellite_info.status.result == 'ok')
