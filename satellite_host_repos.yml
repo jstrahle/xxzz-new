@@ -20,4 +20,11 @@
     rhc_insights:
       state: absent
   roles:
-    - redhat.rhel_system_roles.rhc
+    - fedora.linux_system_roles.rhc
+  tasks:
+    - name: Install required packages
+      ansible.builtin.dnf:
+        name:
+          - ansible-collection-redhat-satellite
+          - ansible-collection-redhat-satellite_operations
+        state: present
