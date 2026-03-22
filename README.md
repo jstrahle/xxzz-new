@@ -1,0 +1,13 @@
+0. Varmista, että asennuksesi on rekisteröity: sudo subscription-manager register
+1. Varmista, että RHEL on uusin versio ja päivitä se jos tarvetta
+2. Asenna git ja ansible core: sudo dnf install git ansible-core
+3. Asenna vaadittavat ansible-collectionit:
+   ansible-galaxy collection install community.general
+   ansible-galaxy collection install ansible.posix
+   ansible-galaxy collection install fedora.linux_system_roles
+4. Editoi inventoryyn haluamasi hostit (satellite ja capsulet) ja varmista, että vault-tiedostossa on Red Hat portaalin tunnukset
+5. Aja host prepare playbook: ansible-playbook -i inventory satellite_host_prepare.yml -e @vault_satellite.yml
+6. Aja repository playbook: ansible-playbook -i inventory satellite_host_repos.yml -e @vault_satellite.yml
+7. Editoi oikeat arvot vars_satellit.yml tiedostoon ja varmista, että manifesti ja tiedostot ovat oikeissa paikoissa (vars-tiedoston mukaisesti)
+8. Asenna satellite: ansible-playbook -i inventory satellite_install.yml -e @vault_satellite.yml -e @vars_satellite.yml
+9. Konfiguroi satellite: ansible-playbook -i inventory satellite_configure.yaml -e @vault_satellite.yml -e @vars_satellite.yml
