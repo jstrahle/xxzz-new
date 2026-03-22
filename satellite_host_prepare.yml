@@ -10,10 +10,6 @@
     mount_point: /var/lib/pulp
     env_type: prod
   tasks:
-    - name: Clean DNF cache
-      ansible.builtin.dnf:
-        clean: all
-
     - name: Upgrade all packages to the newest version
       ansible.builtin.dnf:
         name: "*"
