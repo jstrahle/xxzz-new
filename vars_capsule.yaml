@@ -6,6 +6,7 @@ satellite_installer_locale: C.UTF-8
 satellite_installer_no_colors: true
 satellite_installer_verbose: true
 satellite_installer_timeout: 1800
+satellite_server_url: https://satellite.example.com
 
 satellite_capsule_firewall_zone: public
 
@@ -23,7 +24,7 @@ satellite_installer_options:
   - --foreman-proxy-content-enable-ostree true
   - --foreman-proxy-plugin-openscap-ansible-module
   - --foreman-proxy-register-in-foreman true
-  - --foreman-proxy-foreman-base-url https://{{ groups.satellite[0] }}
+  - --foreman-proxy-foreman-base-url {{ satellite_server_url }}
   - --foreman-proxy-oauth-consumer-key '{{ oauth_consumer_key }}'
   - --foreman-proxy-oauth-consumer-secret '{{ oauth_consumer_secret }}'
   - --foreman-proxy-trusted-hosts {{ groups.satellite[0] }}
