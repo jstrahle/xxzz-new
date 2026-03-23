@@ -34,6 +34,7 @@
           - tar
           - tpm2-tools
           - zstd
+          - python3-pip
         state: present
 
     - name: Resolve Azure data disk symlink
