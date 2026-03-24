@@ -59,9 +59,6 @@
         - "{{ results_dir }}"
 
   tasks:
-    # ------------------------------------------------------------------ #
-    #  Verify prerequisites                                               #
-    # ------------------------------------------------------------------ #
     - name: Verify foreman_scap_client is present and executable
       ansible.builtin.file:
         path: "{{ foreman_scap_client_bin }}"
@@ -79,9 +76,8 @@
           Ensure policy Id {{ policy_id }} has been applied to this host in Satellite.
       when: not scap_conf_stat.stat.exists
 
-    # ------------------------------------------------------------------ #
-    #  Download SCAP content from Satellite if not already present        #
-    # ------------------------------------------------------------------ #
+
+
     - name: Check if SCAP content is already present
       ansible.builtin.stat:
         path: "{{ scap_content_file }}"
@@ -102,16 +98,16 @@
       no_log: true
       when: not scap_content_stat.stat.exists
 
-    # ------------------------------------------------------------------ #
-    #  Patch config.yaml                                                  #
-    #                                                                     #
-    #  Satellite deploys config.yaml with three incorrect values for      #
-    #  this environment:                                                   #
-    #   :port         443  → 9090  (ARF upload goes to Foreman proxy)     #
-    #   :ca_file           → system trust bundle (proxy uses Entrust       #
-    #                        cert, Katello CA cannot verify it)            #
-    #   :content_path      → path of downloaded SCAP content file         #
-    # ------------------------------------------------------------------ #
+    #
+    #  Patch config.yaml
+    #  
+    #  Satellite deploys config.yaml with three incorrect values for
+    #  this setup:
+    #   :port         443  → 9090  (ARF upload goes to Foreman proxy)
+    #   :ca_file           → system trust bundle (proxy uses Entrust
+    #                        cert, Katello CA cannot verify it)
+    #   :content_path      → path of downloaded SCAP content file
+    #
     - name: Back up original config
       ansible.builtin.copy:
         src: "{{ scap_client_conf }}"
@@ -137,9 +133,8 @@
         regexp: '^\s*:content_path:.*$'
         replace: '  :content_path: {{ scap_content_file }}'
 
-    # ------------------------------------------------------------------ #
-    #  Run scan and upload results to Satellite                           #
-    # ------------------------------------------------------------------ #
+
+
     - name: Run OpenSCAP scan and upload results to Satellite
       ansible.builtin.command:
         cmd: "{{ foreman_scap_client_bin }} {{ policy_id }}"
@@ -148,9 +143,8 @@
       failed_when: scap_run.rc not in [0, 2]
       timeout: "{{ scan_timeout }}"
 
-    # ------------------------------------------------------------------ #
-    #  Archive ARF report locally                                         #
-    # ------------------------------------------------------------------ #
+
+
     - name: Find ARF result file produced by scan
       ansible.builtin.find:
         paths: /tmp
@@ -167,13 +161,13 @@
         mode: '0640'
       when: arf_bz2_files.files | length > 0
 
-  post_tasks:
-    - name: Scan summary
-      ansible.builtin.debug:
-        msg:
-          - "===== OpenSCAP Scan Complete ====="
-          - "Host       : {{ inventory_hostname }}"
-          - "Policy ID  : {{ policy_id }}"
-          - "Scan status: {{ 'PASSED (no findings)' if scap_run.rc == 0 else 'COMPLETED WITH FINDINGS (rc=2)' }}"
-          - "Uploaded to: {{ satellite_url }}:{{ satellite_proxy_port }}/compliance/arf/{{ policy_id }}"
-          - "=================================="
+#  post_tasks:
+#    - name: Scan summary
+#      ansible.builtin.debug:
+#        msg:
+#          - "===== OpenSCAP Scan Complete ====="
+#          - "Host       : {{ inventory_hostname }}"
+#          - "Policy ID  : {{ policy_id }}"
+#          - "Scan status: {{ 'PASSED (no findings)' if scap_run.rc == 0 else 'COMPLETED WITH FINDINGS (rc=2)' }}"
+#          - "Uploaded to: {{ satellite_url }}:{{ satellite_proxy_port }}/compliance/arf/{{ policy_id }}"
+#          - "=================================="
