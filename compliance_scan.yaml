@@ -1,0 +1,179 @@
+---
+# Runs OpenSCAP scan on RHEL 9.7 clients registered to Satellite 6.17
+# and uploads results to Satellite via Foreman proxy.
+#
+# Prerequisites:
+#   - Host registered to Satellite with subscription-manager
+#   - OpenSCAP policy deployed to host in Satellite (provides config.yaml)
+#   - Satellite admin credentials for SCAP content download (use vault)
+#
+
+- name: OpenSCAP Scan and Report to Satellite
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    policy_id: 1
+    scap_content_id: 5
+    satellite_url: "https://satellite.example.com"
+    satellite_proxy_port: 9090
+
+    satellite_username: "admin"       # use ansible-vault in production
+    satellite_password: "changeme"    # use ansible-vault in production
+
+    foreman_scap_client_bin: "/usr/bin/foreman_scap_client"
+    scap_client_conf: "/etc/foreman_scap_client/config.yaml"
+    scap_content_file: "/var/lib/openscap/content/ssg-rhel9-ds.xml"
+    results_dir: "/var/lib/openscap/reports"
+
+    system_ca_bundle: "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
+    katello_ca_cert: "/etc/rhsm/ca/katello-server-ca.pem"
+
+    scan_timeout: 3600
+
+  pre_tasks:
+    - name: Assert OS is RHEL 9
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution == "RedHat"
+          - ansible_distribution_major_version == "9"
+        fail_msg: "This playbook targets RHEL 9 only. Detected: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+    - name: Ensure required packages are installed
+      ansible.builtin.dnf:
+        name:
+          - openscap-scanner
+          - foreman_scap_client_bash
+        state: present
+
+    - name: Ensure required directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0750'
+      loop:
+        - "/var/lib/openscap/content"
+        - "{{ results_dir }}"
+
+  tasks:
+    # ------------------------------------------------------------------ #
+    #  Verify prerequisites                                               #
+    # ------------------------------------------------------------------ #
+    - name: Verify foreman_scap_client is present and executable
+      ansible.builtin.file:
+        path: "{{ foreman_scap_client_bin }}"
+        mode: '0755'
+
+    - name: Check Satellite config is deployed
+      ansible.builtin.stat:
+        path: "{{ scap_client_conf }}"
+      register: scap_conf_stat
+
+    - name: Abort if config not deployed by Satellite
+      ansible.builtin.fail:
+        msg: >
+          {{ scap_client_conf }} not found.
+          Ensure policy Id {{ policy_id }} has been applied to this host in Satellite.
+      when: not scap_conf_stat.stat.exists
+
+    # ------------------------------------------------------------------ #
+    #  Download SCAP content from Satellite if not already present        #
+    # ------------------------------------------------------------------ #
+    - name: Check if SCAP content is already present
+      ansible.builtin.stat:
+        path: "{{ scap_content_file }}"
+      register: scap_content_stat
+
+    - name: Download SCAP content from Satellite admin API
+      ansible.builtin.get_url:
+        url: "{{ satellite_url }}/api/v2/compliance/scap_contents/{{ scap_content_id }}/xml"
+        dest: "{{ scap_content_file }}"
+        url_username: "{{ satellite_username }}"
+        url_password: "{{ satellite_password }}"
+        validate_certs: true
+        ca_path: "{{ katello_ca_cert }}"
+        force: false
+        owner: root
+        group: root
+        mode: '0640'
+      no_log: true
+      when: not scap_content_stat.stat.exists
+
+    # ------------------------------------------------------------------ #
+    #  Patch config.yaml                                                  #
+    #                                                                     #
+    #  Satellite deploys config.yaml with three incorrect values for      #
+    #  this environment:                                                   #
+    #   :port         443  → 9090  (ARF upload goes to Foreman proxy)     #
+    #   :ca_file           → system trust bundle (proxy uses Entrust       #
+    #                        cert, Katello CA cannot verify it)            #
+    #   :content_path      → path of downloaded SCAP content file         #
+    # ------------------------------------------------------------------ #
+    - name: Back up original config
+      ansible.builtin.copy:
+        src: "{{ scap_client_conf }}"
+        dest: "{{ scap_client_conf }}.bak"
+        remote_src: true
+        mode: '0640'
+
+    - name: Patch port to Foreman proxy port
+      ansible.builtin.replace:
+        path: "{{ scap_client_conf }}"
+        regexp: '^:port:.*$'
+        replace: ':port: {{ satellite_proxy_port }}'
+
+    - name: Patch ca_file to system trust bundle
+      ansible.builtin.replace:
+        path: "{{ scap_client_conf }}"
+        regexp: '^:ca_file:.*$'
+        replace: ':ca_file: {{ system_ca_bundle }}'
+
+    - name: Patch content_path to downloaded SCAP content
+      ansible.builtin.replace:
+        path: "{{ scap_client_conf }}"
+        regexp: '^\s*:content_path:.*$'
+        replace: '  :content_path: {{ scap_content_file }}'
+
+    # ------------------------------------------------------------------ #
+    #  Run scan and upload results to Satellite                           #
+    # ------------------------------------------------------------------ #
+    - name: Run OpenSCAP scan and upload results to Satellite
+      ansible.builtin.command:
+        cmd: "{{ foreman_scap_client_bin }} {{ policy_id }}"
+      register: scap_run
+      changed_when: true
+      failed_when: scap_run.rc not in [0, 2]
+      timeout: "{{ scan_timeout }}"
+
+    # ------------------------------------------------------------------ #
+    #  Archive ARF report locally                                         #
+    # ------------------------------------------------------------------ #
+    - name: Find ARF result file produced by scan
+      ansible.builtin.find:
+        paths: /tmp
+        patterns: "results.xml.bz2"
+        age: "-10m"
+        recurse: true
+      register: arf_bz2_files
+
+    - name: Archive ARF result to results directory
+      ansible.builtin.copy:
+        src: "{{ (arf_bz2_files.files | sort(attribute='mtime') | last).path }}"
+        dest: "{{ results_dir }}/results-{{ ansible_date_time.iso8601_basic_short }}.xml.bz2"
+        remote_src: true
+        mode: '0640'
+      when: arf_bz2_files.files | length > 0
+
+  post_tasks:
+    - name: Scan summary
+      ansible.builtin.debug:
+        msg:
+          - "===== OpenSCAP Scan Complete ====="
+          - "Host       : {{ inventory_hostname }}"
+          - "Policy ID  : {{ policy_id }}"
+          - "Scan status: {{ 'PASSED (no findings)' if scap_run.rc == 0 else 'COMPLETED WITH FINDINGS (rc=2)' }}"
+          - "Uploaded to: {{ satellite_url }}:{{ satellite_proxy_port }}/compliance/arf/{{ policy_id }}"
+          - "=================================="
