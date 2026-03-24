@@ -1,0 +1,215 @@
+---
+- name: Install Satellite HTTPS certificate from Azure Key Vault
+  hosts: satellite
+  become: true
+  gather_facts: false
+  vars:
+    key_vault_name: keyvault
+    azure_subscription_id: subscription_id
+    satellite_bundle_secret: satellitetest
+    cert_dest: /root/satellite_cert/satellite.crt
+    key_dest: /root/satellite_cert/satellite.key
+    ca_dest: /root/satellite_cert/satellite-ca.crt
+
+  tasks:
+    - name: Create working directory for certificate files
+      ansible.builtin.file:
+        path: /root/satellite_cert
+        state: directory
+        mode: '0700'
+
+    - name: Retrieve certificate bundle from Azure Key Vault
+      azure.azcollection.azure_rm_keyvaultsecret_info:
+        auth_source: msi
+        subscription_id: "{{ azure_subscription_id }}"
+        vault_uri: "https://{{ key_vault_name }}.vault.azure.net"
+        name: "{{ satellite_bundle_secret }}"
+      register: satellite_bundle
+      no_log: true
+      become: false
+
+    - name: Write bundle to temp file for processing
+      ansible.builtin.copy:
+        content: "{{ satellite_bundle.secrets[0].secret }}"
+        dest: /root/satellite_cert/bundle.pem
+        mode: '0600'
+      no_log: true
+
+    - name: Extract private key from bundle
+      ansible.builtin.shell:
+        cmd: openssl pkey -in /root/satellite_cert/bundle.pem -out {{ key_dest }}
+      no_log: true
+      changed_when: true
+
+    - name: Extract server certificate from bundle
+      ansible.builtin.shell:
+        cmd: openssl x509 -in /root/satellite_cert/bundle.pem -out {{ cert_dest }}
+      changed_when: true
+
+    - name: Extract CA chain from bundle
+      ansible.builtin.shell:
+        cmd: >
+          awk '/-----BEGIN CERTIFICATE-----/{c++} c>1{print}'
+          /root/satellite_cert/bundle.pem > {{ ca_dest }}
+      changed_when: true
+
+    - name: Remove bundle temp file
+      ansible.builtin.file:
+        path: /root/satellite_cert/bundle.pem
+        state: absent
+
+    - name: Verify CA chain is not empty
+      ansible.builtin.stat:
+        path: "{{ ca_dest }}"
+      register: ca_stat
+
+    - name: Fail if CA chain is empty
+      ansible.builtin.fail:
+        msg: >
+          CA chain file is empty — the bundle must contain at least
+          2 certificates (server cert + CA chain).
+      when: ca_stat.stat.size == 0
+
+    - name: Validate certificate files with katello-certs-check
+      ansible.builtin.command:
+        cmd: >
+          katello-certs-check
+          -t satellite
+          -b {{ ca_dest }}
+          -c {{ cert_dest }}
+          -k {{ key_dest }}
+      changed_when: false
+      register: certs_check
+
+    - name: Show katello-certs-check output
+      ansible.builtin.debug:
+        msg: "{{ certs_check.stdout }}"
+
+    - name: Deploy custom certificate to Satellite
+      ansible.builtin.command:
+        cmd: >
+          satellite-installer
+          --scenario satellite
+          --certs-server-cert {{ cert_dest }}
+          --certs-server-key {{ key_dest }}
+          --certs-server-ca-cert {{ ca_dest }}
+          --certs-update-server
+          --certs-update-server-ca
+          --skip-checks-i-know-better
+      changed_when: true
+
+    - name: Update proxy_ca.pem with both Satellite CA and Katello CA
+      ansible.builtin.shell:
+        cmd: >
+          cat /root/satellite_cert/satellite-ca.crt
+          /etc/pki/katello/certs/katello-default-ca.crt
+          > /etc/foreman/proxy_ca.pem
+      changed_when: true
+
+    - name: Set correct ownership on proxy_ca.pem
+      ansible.builtin.file:
+        path: /etc/foreman/proxy_ca.pem
+        owner: root
+        group: foreman
+        mode: '0640'
+          
+    - name: Verify Satellite web UI is reachable with new certificate
+      ansible.builtin.uri:
+        url: https://{{ inventory_hostname }}
+        validate_certs: true
+        method: GET
+      register: satellite_status
+      retries: 5
+      delay: 10
+      until: satellite_status.status in [200, 302]
+
+    - name: Show success message
+      ansible.builtin.debug:
+        msg: "Satellite {{ inventory_hostname }} is serving the new certificate successfully"
+
+- name: Refresh Capsule certificates after Satellite certificate update
+  hosts: capsules
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Remove old Capsule certificate tarball from Satellite server
+      ansible.builtin.file:
+        path: /root/{{ inventory_hostname }}-certs.tar
+        state: absent
+      delegate_to: "{{ groups.satellite[0] }}"
+
+    - name: Regenerate Capsule certificate tarball on Satellite server
+      throttle: 1
+      ansible.builtin.command:
+        cmd: >
+          capsule-certs-generate
+          --foreman-proxy-fqdn {{ inventory_hostname }}
+          --certs-tar /root/{{ inventory_hostname }}-certs.tar
+        creates: /root/{{ inventory_hostname }}-certs.tar
+      delegate_to: "{{ groups.satellite[0] }}"
+      register: capsule_certs_generate
+
+    - name: Show satellite-installer command from capsule-certs-generate
+      ansible.builtin.debug:
+        msg: "{{ capsule_certs_generate.stdout }}"
+
+    - name: Fetch new Capsule certificate tarball from Satellite server
+      ansible.builtin.slurp:
+        src: /root/{{ inventory_hostname }}-certs.tar
+      register: capsule_certs_tar
+      delegate_to: "{{ groups.satellite[0] }}"
+
+    - name: Copy new Capsule certificate tarball to Capsule
+      ansible.builtin.copy:
+        content: "{{ capsule_certs_tar.content | b64decode }}"
+        dest: /root/{{ inventory_hostname }}-certs.tar
+        mode: '0600'
+
+    - name: Deploy new certificates on Capsule
+      ansible.builtin.command:
+        cmd: >
+          satellite-installer
+          --scenario capsule
+          --certs-tar-file /root/{{ inventory_hostname }}-certs.tar
+          --certs-update-server
+          --foreman-proxy-foreman-base-url https://{{ groups.satellite[0] }}
+          --foreman-proxy-register-in-foreman=true
+          --skip-checks-i-know-better
+      changed_when: true
+
+    - name: Fetch new Satellite CA certificate from Satellite server
+      ansible.builtin.slurp:
+        src: /root/satellite_cert/satellite-ca.crt
+      register: satellite_ca_content
+      delegate_to: "{{ groups.satellite[0] }}"
+
+    - name: Update foreman_ssl_ca.pem on Capsule with new Satellite CA
+      # The Capsule uses this file to verify the Satellite's HTTPS certificate.
+      # After satellite-installer runs it reverts to the Katello CA, so we
+      # must update it to the new Entrust CA so the Capsule trusts the Satellite.
+      ansible.builtin.copy:
+        content: "{{ satellite_ca_content.content | b64decode }}"
+        dest: /etc/foreman-proxy/foreman_ssl_ca.pem
+        owner: foreman-proxy
+        group: foreman-proxy
+        mode: '0640'
+
+    - name: Restart foreman-proxy to pick up new CA
+      ansible.builtin.service:
+        name: foreman-proxy
+        state: restarted
+
+    - name: Verify Capsule is reachable after certificate update
+      ansible.builtin.uri:
+        url: https://{{ inventory_hostname }}:9090/features
+        validate_certs: true
+        method: GET
+      register: capsule_status
+      retries: 5
+      delay: 10
+      until: capsule_status.status == 200
+
+    - name: Show Capsule status
+      ansible.builtin.debug:
+        msg: "Capsule {{ inventory_hostname }} is reachable and working correctly"
+      when: capsule_status.status == 200
