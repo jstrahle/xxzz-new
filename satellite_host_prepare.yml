@@ -124,13 +124,9 @@
       changed_when: true
       failed_when: false
 
-    - name: Set FQDN based on environment
-      ansible.builtin.set_fact:
-        fqdn_hostname: "{{ ansible_hostname }}.{{ 'rhsat.azr.op-palvelut.fi' if env_type == 'prod' else 'rhsatdev.dev.azr.op-palvelut.net' }}"
-
     - name: Update system hostname
       ansible.builtin.hostname:
-        name: "{{ fqdn_hostname }}"
+        name: "{{ satellite_fqdn_hostname }}"
 
     - name: Get primary IP address
       ansible.builtin.set_fact:
@@ -140,7 +136,7 @@
       ansible.builtin.lineinfile:
         path: /etc/hosts
         regexp: "^{{ primary_ip }}\\s+"
-        line: "{{ primary_ip }} {{ fqdn_hostname }} {{ ansible_hostname }}"
+        line: "{{ primary_ip }} {{ satellite_fqdn_hostname }} {{ ansible_hostname }}"
         state: present
         create: yes
         backup: yes
