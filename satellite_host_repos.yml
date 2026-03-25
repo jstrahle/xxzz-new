@@ -6,11 +6,11 @@
   vars:
     satellite_version: 6.17
     rhc_state: present
-    rhc_auth:
-      login:
-        # These should come from vault
-        username: "{{ satellite_rhsm_username }}"
-        password: "{{ satellite_rhsm_password }}"
+#    rhc_auth:
+#      login:
+#        # These should come from vault
+#        username: "{{ satellite_rhsm_username }}"
+#        password: "{{ satellite_rhsm_password }}"
     rhc_repositories:
       - name: rhel-{{ ansible_facts.distribution_major_version }}-for-x86_64-baseos-rpms
       - name: rhel-{{ ansible_facts.distribution_major_version }}-for-x86_64-appstream-rpms
@@ -19,6 +19,33 @@
     # Insights is configured as part of Satellite/Capsule installation
     rhc_insights:
       state: absent
+  pre_tasks:
+    - name: Retrieve rhsm username from Azure Key Vault
+      azure.azcollection.azure_rm_keyvaultsecret_info:
+        auth_source: msi
+        subscription_id: "{{ azure_subscription_id }}"
+        vault_uri: "https://{{ key_vault_name }}.vault.azure.net"
+        name: "{{ rhsm_username_vault }}"
+      register: rhsm_username_azure
+      no_log: true
+      become: false
+
+    - name: Retrieve rhsm password from Azure Key Vault
+      azure.azcollection.azure_rm_keyvaultsecret_info:
+        auth_source: msi
+        subscription_id: "{{ azure_subscription_id }}"
+        vault_uri: "https://{{ key_vault_name }}.vault.azure.net"
+        name: "{{ rhsm_password_vault }}"
+      register: rhsm_password_azure
+      no_log: true
+      become: false
+
+    - name: Set facts for rhsm username and password
+      ansible.builtin.set_fact:
+        rhc_auth:
+          login:
+             username: "{{ rhsm_username_azure.secrets[0].secret }}"
+             password: "{{ rhsm_password_azure.secrets[0].secret }}"
   roles:
     - fedora.linux_system_roles.rhc
   tasks:

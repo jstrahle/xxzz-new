@@ -7,6 +7,13 @@ satellite_installer_no_colors: true
 satellite_installer_verbose: true
 satellite_installer_timeout: 1800
 
+# Azure Key Vault credentials
+key_vault_name: keyvault
+azure_subscription_id: subscription_id
+rhsm_username_vault: subscription-manager-password
+rhsh_password_vault: subscription-manager-username
+satellite_password_vault: satellite-portal-password
+
 satellite_server_url: https://satellite.example.com
 sat_org: "Acme Enterprises"
 sat_location: "Test Lab"
