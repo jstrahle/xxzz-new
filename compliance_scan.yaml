@@ -19,9 +19,6 @@
     satellite_url: "https://satellite.example.com"
     satellite_proxy_port: 9090
 
-    satellite_username: "admin"       # use ansible-vault in production
-    satellite_password: "changeme"    # use ansible-vault in production
-
     foreman_scap_client_bin: "/usr/bin/foreman_scap_client"
     scap_client_conf: "/etc/foreman_scap_client/config.yaml"
     scap_content_file: "/var/lib/openscap/content/ssg-rhel9-ds.xml"
@@ -33,6 +30,20 @@
     scan_timeout: 3600
 
   pre_tasks:
+    - name: Retrieve Satellite password from Azure Key Vault
+      azure.azcollection.azure_rm_keyvaultsecret_info:
+        auth_source: msi
+        subscription_id: "{{ azure_subscription_id }}"
+        vault_uri: "https://{{ key_vault_name }}.vault.azure.net"
+        name: "{{ satellite_password_vault }}"
+      register: satellite_password_azure
+      no_log: true
+      become: false
+
+    - name: Set facts for satellite connection
+      ansible.builtin.set_fact:
+        satellite_password: "{{ satellite_password_azure.secrets[0].secret }}"
+
     - name: Assert OS is RHEL 9
       ansible.builtin.assert:
         that:
