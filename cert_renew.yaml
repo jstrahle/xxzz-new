@@ -4,9 +4,6 @@
   become: true
   gather_facts: false
   vars:
-    key_vault_name: keyvault
-    azure_subscription_id: subscription_id
-    satellite_bundle_secret: satellitetest
     cert_dest: /root/satellite_cert/satellite.crt
     key_dest: /root/satellite_cert/satellite.key
     ca_dest: /root/satellite_cert/satellite-ca.crt

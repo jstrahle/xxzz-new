@@ -11,6 +11,7 @@ satellite_username: admin
 # Azure Key Vault credentials
 key_vault_name: keyvault
 azure_subscription_id: subscription_id
+satellite_bundle_secret: satellitetest
 rhsm_username_vault: subscription-manager-username
 rhsm_password_vault: subscription-manager-password
 satellite_password_vault: satellite-portal-password
