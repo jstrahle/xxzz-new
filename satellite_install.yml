@@ -3,6 +3,44 @@
   hosts: satellite
   become: true
   gather_facts: true
+
+  pre_tasks:
+    - name: Retrieve rhsm username from Azure Key Vault
+      azure.azcollection.azure_rm_keyvaultsecret_info:
+        auth_source: msi
+        subscription_id: "{{ azure_subscription_id }}"
+        vault_uri: "https://{{ key_vault_name }}.vault.azure.net"
+        name: "{{ rhsm_username_vault }}"
+      register: rhsm_username_azure
+      no_log: true
+      become: false
+
+    - name: Retrieve rhsm password from Azure Key Vault
+      azure.azcollection.azure_rm_keyvaultsecret_info:
+        auth_source: msi
+        subscription_id: "{{ azure_subscription_id }}"
+        vault_uri: "https://{{ key_vault_name }}.vault.azure.net"
+        name: "{{ rhsm_password_vault }}"
+      register: rhsm_password_azure
+      no_log: true
+      become: false
+
+    - name: Retrieve Satellite password from Azure Key Vault
+      azure.azcollection.azure_rm_keyvaultsecret_info:
+        auth_source: msi
+        subscription_id: "{{ azure_subscription_id }}"
+        vault_uri: "https://{{ key_vault_name }}.vault.azure.net"
+        name: "{{ satellite_password_vault }}"
+      register: satellite_password_azure
+      no_log: true
+      become: false
+
+    - name: Set facts for rhsm username and password
+      ansible.builtin.set_fact:
+        satellite_rhsm_username: "{{ rhsm_username_azure.secrets[0].secret }}"
+        satellite_rhsm_password: "{{ rhsm_password_azure.secrets[0].secret }}"
+        satellite_password: "{{ satellite_password_azure.secrets[0].secret }}"
+
   tasks:
     - name: Fail if invalid Satellite URL defined
       ansible.builtin.fail:

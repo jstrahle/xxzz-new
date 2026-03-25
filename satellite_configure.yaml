@@ -12,6 +12,24 @@
       password: "{{ satellite_password }}"
       validate_certs: "{{ satellite_validate_certs }}"
 
+  pre_tasks:
+    - name: Retrieve Satellite password from Azure Key Vault
+      azure.azcollection.azure_rm_keyvaultsecret_info:
+        auth_source: msi
+        subscription_id: "{{ azure_subscription_id }}"
+        vault_uri: "https://{{ key_vault_name }}.vault.azure.net"
+        name: "{{ satellite_password_vault }}"
+      register: satellite_password_azure
+      no_log: true
+      become: false
+
+    - name: Set facts for satellite connection
+      ansible.builtin.set_fact:
+        _sat_conn: &sat_conn
+          server_url: "{{ satellite_server_url }}"
+          username: "{{ satellite_username }}"
+          password: "{{ satellite_password_azure.secrets[0].secret }}"
+          validate_certs: "{{ satellite_validate_certs }}"
   tasks:
     - name: Upload subscription manifest to Satellite
       redhat.satellite.subscription_manifest:

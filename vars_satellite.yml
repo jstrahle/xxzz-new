@@ -6,6 +6,7 @@ satellite_installer_locale: C.UTF-8
 satellite_installer_no_colors: true
 satellite_installer_verbose: true
 satellite_installer_timeout: 1800
+satellite_username: admin
 
 # Azure Key Vault credentials
 key_vault_name: keyvault
